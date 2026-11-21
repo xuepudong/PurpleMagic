@@ -114,6 +114,27 @@ class DeploymentTools(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'example settings'):
             deploy_tool.prepare(settings, self.root/'placeholder', 1000, 1000)
 
+    def test_default_ports_follow_the_configured_origins(self):
+        output = self.root/'default-ports'
+        deploy_tool.prepare(self.settings(), output, 1000, 1000)
+        self.assertEqual(json.loads((output/'gateway.json').read_text())['listen'], '0.0.0.0:8443')
+        self.assertIn('listen 443 ssl;', (output/'nginx.conf').read_text())
+        self.assertEqual(json.loads((output/'prepared.json').read_text())['ports'], [443, 8443])
+
+    def test_custom_gm_port_is_written_to_nginx(self):
+        settings = self.settings(); settings['gmOrigin'] = 'https://gm.example.test:18445'
+        output = self.root/'custom-gm'
+        deploy_tool.prepare(settings, output, 1000, 1000)
+        self.assertIn('listen 18445 ssl;', (output/'nginx.conf').read_text())
+        self.assertEqual(json.loads((output/'service.json').read_text())['publicOrigin'], 'https://gm.example.test:18445')
+        self.assertEqual(json.loads((output/'prepared.json').read_text())['ports'], [18445, 8443])
+
+    def test_private_or_clashing_public_ports_are_rejected(self):
+        for origin in ('https://gm.example.test:18444', 'https://gm.example.test:80', 'https://gm.example.test:8443'):
+            settings = self.settings(); settings['gmOrigin'] = origin
+            with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, 'port'):
+                deploy_tool.prepare(settings, self.root/('bad-' + origin.rsplit(':', 1)[1]), 1000, 1000)
+
 
 if __name__ == '__main__':
     unittest.main()

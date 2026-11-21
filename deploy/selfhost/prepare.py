@@ -34,6 +34,16 @@ def write(path, value):
         stream.write(value)
 
 
+PRIVATE_PORTS = (18080, 18081, 18082, 18444)
+
+
+def public_port(port, default):
+    """A public listener port: the scheme default, or an unprivileged port not used by the private services."""
+    if port is None:
+        return default is not None
+    return port == default or (1024 <= port <= 65535 and port not in PRIVATE_PORTS)
+
+
 def prepare(settings, output, uid=None, gid=None):
     output = output.resolve()
     if output.exists():
@@ -43,10 +53,10 @@ def prepare(settings, output, uid=None, gid=None):
     if re.search(r'CHANGE_ME|REPLACE_WITH|<[^>]+>', json.dumps(settings)):
         raise ValueError('Replace the example settings before preparation')
     domain = urlsplit(settings['gmOrigin'])
-    if (domain.scheme != 'https' or not domain.hostname or domain.port not in (None, 443)
+    if (domain.scheme != 'https' or not domain.hostname or not public_port(domain.port, 443)
             or domain.path or domain.query or domain.fragment or domain.username
             or not re.fullmatch(r'[A-Za-z0-9.-]+', domain.hostname)):
-        raise ValueError('gmOrigin must be an HTTPS domain origin on port 443')
+        raise ValueError('gmOrigin must be an HTTPS domain origin on 443 or a free port 1024-65535')
     inputs = {k: Path(settings[k]).resolve() for k in (
         'approvedProfile', 'signingPrivateKey', 'pvfFile', 'playerCertificate',
         'playerPrivateKey', 'playerCA', 'webCertificate', 'webPrivateKey')}
@@ -54,10 +64,14 @@ def prepare(settings, output, uid=None, gid=None):
         raise ValueError('Provide every profile, PVF, certificate and key input')
     profile = json.loads(inputs['approvedProfile'].read_text(encoding='utf-8-sig'))
     player = urlsplit(profile['ApiUrl'])
-    if (player.scheme != 'https' or not player.hostname or player.port != 8443
+    if (player.scheme != 'https' or not player.hostname or player.port is None
+            or not public_port(player.port, None)
             or player.path or player.username or player.query or player.fragment
             or not re.fullmatch(r'[A-Za-z0-9.-]+', player.hostname)):
-        raise ValueError('This recipe uses a direct player HTTPS origin on port 8443')
+        raise ValueError('ApiUrl must be a direct player HTTPS origin with an explicit port 1024-65535')
+    gm_port = domain.port or 443
+    if gm_port == player.port:
+        raise ValueError('gmOrigin and the player ApiUrl need different ports')
     pvf_hash = digest(inputs['pvfFile'])
     if pvf_hash != profile['PvfSha256'].lower():
         raise ValueError('PVF bytes do not match the approved player profile')
@@ -98,7 +112,7 @@ def prepare(settings, output, uid=None, gid=None):
                       webRoot='', pvfSha256=pvf_hash, gameApi=game['adminUrl'],
                       gameToken=game['adminToken'], scanSeconds=60, serviceToken=gateway_token,
                       catalog={'url': 'http://127.0.0.1:18081', 'token': catalog, 'pvfSha256': pvf_hash})
-    gateway = dict(listen='0.0.0.0:8443', certificate='/data/tls-player/server.crt',
+    gateway = dict(listen=f'0.0.0.0:{player.port}', certificate='/data/tls-player/server.crt',
                    key='/data/tls-player/server.key', upstream=game['upstream'],
                    proxy_secret=game['proxySecret'], release_dir='/data/releases', management=management,
                    launcher_hub={'admin_listen': management['listen'], 'admin_token_sha256': admin_hash,
@@ -130,7 +144,7 @@ def prepare(settings, output, uid=None, gid=None):
     write(output / 'admin-token.txt', admin + '\n')
     write(output / 'compose.env', f"PM_DATA='{output.as_posix()}'\nPM_UID={uid}\nPM_GID={gid}\nPM_PVF_SHA256={pvf_hash}\n")
     nginx = '''server {
-    listen 443 ssl;
+    listen GM_PORT ssl;
     server_name DOMAIN;
     ssl_certificate /etc/nginx/tls/server.crt;
     ssl_certificate_key /etc/nginx/tls/server.key;
@@ -152,9 +166,9 @@ def prepare(settings, output, uid=None, gid=None):
         proxy_read_timeout 180s;
     }
 }
-'''.replace('DOMAIN', domain.hostname).replace('PLAYER', player.hostname)
+'''.replace('DOMAIN', domain.hostname).replace('PLAYER', player.hostname).replace('GM_PORT', str(gm_port))
     write(output / 'nginx.conf', nginx)
-    write(output / 'prepared.json', json.dumps({'format': 1, 'pvfSha256': pvf_hash, 'ports': [443, 8443],
+    write(output / 'prepared.json', json.dumps({'format': 1, 'pvfSha256': pvf_hash, 'ports': [gm_port, player.port],
                                                'privatePorts': [18080, 18081, 18444]}, indent=2) + '\n')
     return output
 
