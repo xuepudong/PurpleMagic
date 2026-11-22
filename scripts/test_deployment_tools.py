@@ -126,6 +126,9 @@ class DeploymentTools(unittest.TestCase):
         output = self.root/'custom-gm'
         deploy_tool.prepare(settings, output, 1000, 1000)
         self.assertIn('listen 18445 ssl;', (output/'nginx.conf').read_text())
+        # The Origin carries :18445, so nginx must forward the client Host with its port.
+        self.assertEqual((output/'nginx.conf').read_text().count('proxy_set_header Host $http_host;'), 2)
+        self.assertNotIn('Host $host;', (output/'nginx.conf').read_text())
         self.assertEqual(json.loads((output/'service.json').read_text())['publicOrigin'], 'https://gm.example.test:18445')
         self.assertEqual(json.loads((output/'prepared.json').read_text())['ports'], [18445, 8443])
 

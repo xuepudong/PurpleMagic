@@ -156,12 +156,12 @@ def prepare(settings, output, uid=None, gid=None):
         proxy_ssl_trusted_certificate /etc/nginx/player-ca.pem;
         proxy_ssl_server_name on;
         proxy_ssl_name PLAYER;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_read_timeout 180s;
     }
     location / {
         proxy_pass http://127.0.0.1:18080;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 180s;
     }
